@@ -1,9 +1,9 @@
-import network
+
 import time
-import machine
 import lvgl as lv
 from micropython_mqtt import MQTTClient
 from ui_config import MQTT_TOPICS, SCREENS
+from network_config import connect_network
 
 MQTT_BROKER = "192.168.1.100"  # <-- your Cebro GX IP
 MQTT_PORT = 1883
@@ -21,38 +21,8 @@ TP_SCK   = 17
 TP_MOSI  = 18
 TP_IRQ   = 21
 
-# W5500 Ethernet pin mapping (adjust for your wiring)
-ETH_CS   = 47
-ETH_SCK  = 36
-ETH_MOSI = 35
-ETH_MISO = 37
-
-# --- ETHERNET SETUP (W5500 with DHCP) ---
-from wiznet5k import WIZNET5K
-
-spi_eth = machine.SoftSPI(sck=machine.Pin(ETH_SCK), mosi=machine.Pin(ETH_MOSI), miso=machine.Pin(ETH_MISO))
-eth = WIZNET5K(spi_eth, machine.Pin(ETH_CS))
 network_connected = False
 mqtt_connected = False
-
-def connect_network():
-    global network_connected
-    try:
-        eth.active(True)
-        # Wait for link
-        for _ in range(20):
-            if eth.is_link_up():
-                break
-            time.sleep(0.2)
-        else:
-            network_connected = False
-            return False, "Ethernet link not up"
-        eth.ifconfig('dhcp')  # Use DHCP
-        network_connected = True
-        return True, ""
-    except Exception as e:
-        network_connected = False
-        return False, str(e)
 
 # --- DISPLAY SETUP (ST7789 240x240 round) ---
 import st7789
