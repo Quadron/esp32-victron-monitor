@@ -3,17 +3,10 @@ import time
 import machine
 import lvgl as lv
 from micropython_mqtt import MQTTClient
+from ui_config import MQTT_TOPICS, SCREENS
 
-# --- CONFIGURATION ---
 MQTT_BROKER = "192.168.1.100"  # <-- your Cebro GX IP
 MQTT_PORT = 1883
-MQTT_TOPICS = [
-    "N/0/Dc/Battery/Soc",            # Battery SOC
-    "N/0/Dc/Battery/TimeToGo",       # Battery time to go
-    "N/0/Solar/MPPT/0/Power",        # MPPT charge wattage
-    "N/0/Ac/Charger/0/Power",        # Multiplus charge wattage
-    "N/0/Tank/0/Level"               # Tank level
-]
 MQTT_CLIENT_ID = "esp32s3_display"
 
 # ESP32-S3-LCD-1.28-B pin mapping for LCD and touch
@@ -91,13 +84,8 @@ touch = GT911(i2c_touch, int_pin=TP_IRQ)
 lvgl_helper.register_touch(touch)
 
 # --- DATA STORAGE ---
-mqtt_data = {
-    "N/0/Dc/Battery/Soc": "--",
-    "N/0/Dc/Battery/TimeToGo": "--",
-    "N/0/Solar/MPPT/0/Power": "--",
-    "N/0/Ac/Charger/0/Power": "--",
-    "N/0/Tank/0/Level": "--"
-}
+# Dynamically create mqtt_data from topics
+mqtt_data = {t['topic']: "--" for t in MQTT_TOPICS}
 
 # --- LVGL UI: MULTI-PAGE, DARK ROUND STYLE ---
 def color(hexstr):  # helper for LVGL color
@@ -141,6 +129,8 @@ def create_round_panel(parent, title, value, unit="", color_val=COLOR_ACCENT):
 
     return panel, lbl_val
 
+
+# --- Dynamic DataPages class using SCREENS and MQTT_TOPICS ---
 class DataPages:
     def __init__(self):
         self.pages = []
@@ -148,70 +138,79 @@ class DataPages:
         self.container = lv.obj()
         self.container.set_size(240,240)
         self.container.set_pos(0,0)
+        self.labels = {}  # {topic: label_obj}
+        self.tank_meter = None
         self.create_pages()
         lv.scr_load(self.container)
         self.show_page(0)
         self.container.add_event_cb(self.handle_swipe, lv.EVENT.GESTURE, None)
 
     def create_pages(self):
-        # PAGE 0: Battery (SOC and Time to Go)
-        page0 = lv.obj(self.container)
-        page0.set_size(240,240)
-        page0.set_style_bg_color(COLOR_BG, 0)
-        page0.set_style_radius(120, 0)
-        panel, self.lbl_soc = create_round_panel(page0, "Battery SOC", "--", "%", COLOR_GREEN)
-        panel2, self.lbl_ttg = create_round_panel(page0, "Time to Go", "--", "h", COLOR_ORANGE)
-        panel2.set_pos(20, 130)
-        self.pages.append(page0)
-
-        # PAGE 1: Charging (MPPT and Multiplus)
-        page1 = lv.obj(self.container)
-        page1.set_size(240,240)
-        page1.set_style_bg_color(COLOR_BG, 0)
-        panel, self.lbl_mppt = create_round_panel(page1, "MPPT Power", "--", "W", COLOR_ACCENT)
-        panel.set_pos(20, 30)
-        panel2, self.lbl_multi = create_round_panel(page1, "MultiPlus", "--", "W", COLOR_ACCENT)
-        panel2.set_pos(20, 130)
-        self.pages.append(page1)
-
-        # PAGE 2: Tank Level (round meter style)
-        page2 = lv.obj(self.container)
-        page2.set_size(240,240)
-        page2.set_style_bg_color(COLOR_BG, 0)
-        # Round arc meter for tank
-        self.tank_meter = lv.arc(page2)
-        self.tank_meter.set_size(180,180)
-        self.tank_meter.set_pos(30,30)
-        self.tank_meter.set_style_bg_color(COLOR_PANEL, 0)
-        self.tank_meter.set_style_arc_color(COLOR_ACCENT, lv.PART.INDICATOR)
-        self.tank_meter.set_style_arc_width(20, lv.PART.INDICATOR)
-        self.tank_meter.set_style_arc_color(COLOR_GREY, lv.PART.MAIN)
-        self.tank_meter.set_style_arc_width(16, lv.PART.MAIN)
-        self.tank_meter.set_rotation(90)
-        self.tank_meter.set_value(0)
-        self.lbl_tank_percent = lv.label(page2)
-        self.lbl_tank_percent.set_text("-- %")
-        self.lbl_tank_percent.set_style_text_color(COLOR_WHITE, 0)
-        self.lbl_tank_percent.set_style_text_font(lv.font_montserrat_32, 0)
-        self.lbl_tank_percent.set_pos(70, 100)
-        self.lbl_tank_title = lv.label(page2)
-        self.lbl_tank_title.set_text("Tank Level")
-        self.lbl_tank_title.set_style_text_color(COLOR_ACCENT, 0)
-        self.lbl_tank_title.set_style_text_font(lv.font_montserrat_16, 0)
-        self.lbl_tank_title.set_pos(75, 40)
-        self.pages.append(page2)
+        color_map = {
+            "green": COLOR_GREEN,
+            "orange": COLOR_ORANGE,
+            "accent": COLOR_ACCENT,
+            "grey": COLOR_GREY,
+            "white": COLOR_WHITE
+        }
+        for screen in SCREENS:
+            page = lv.obj(self.container)
+            page.set_size(240,240)
+            page.set_style_bg_color(COLOR_BG, 0)
+            page.set_style_radius(120, 0)
+            y_offset = 30
+            for idx, topic_name in enumerate(screen["topics"]):
+                topic_cfg = next((t for t in MQTT_TOPICS if t["topic"] == topic_name), None)
+                if not topic_cfg:
+                    continue
+                color_val = color_map.get(topic_cfg.get("color", "accent"), COLOR_ACCENT)
+                if screen["name"] == "Tank":
+                    # Special round meter for tank
+                    self.tank_meter = lv.arc(page)
+                    self.tank_meter.set_size(180,180)
+                    self.tank_meter.set_pos(30,30)
+                    self.tank_meter.set_style_bg_color(COLOR_PANEL, 0)
+                    self.tank_meter.set_style_arc_color(COLOR_ACCENT, lv.PART.INDICATOR)
+                    self.tank_meter.set_style_arc_width(20, lv.PART.INDICATOR)
+                    self.tank_meter.set_style_arc_color(COLOR_GREY, lv.PART.MAIN)
+                    self.tank_meter.set_style_arc_width(16, lv.PART.MAIN)
+                    self.tank_meter.set_rotation(90)
+                    self.tank_meter.set_value(0)
+                    lbl_percent = lv.label(page)
+                    lbl_percent.set_text("-- %")
+                    lbl_percent.set_style_text_color(COLOR_WHITE, 0)
+                    lbl_percent.set_style_text_font(lv.font_montserrat_32, 0)
+                    lbl_percent.set_pos(70, 100)
+                    self.labels[topic_name] = lbl_percent
+                    lbl_title = lv.label(page)
+                    lbl_title.set_text(topic_cfg["label"])
+                    lbl_title.set_style_text_color(COLOR_ACCENT, 0)
+                    lbl_title.set_style_text_font(lv.font_montserrat_16, 0)
+                    lbl_title.set_pos(75, 40)
+                else:
+                    panel, lbl_val = create_round_panel(
+                        page,
+                        topic_cfg["label"],
+                        "--",
+                        topic_cfg.get("unit", ""),
+                        color_val
+                    )
+                    panel.set_pos(20, y_offset)
+                    self.labels[topic_name] = lbl_val
+                    y_offset += 100
+            self.pages.append(page)
 
     def update(self):
-        self.lbl_soc.set_text(str(mqtt_data["N/0/Dc/Battery/Soc"]))
-        self.lbl_ttg.set_text(str(mqtt_data["N/0/Dc/Battery/TimeToGo"]))
-        self.lbl_mppt.set_text(str(mqtt_data["N/0/Solar/MPPT/0/Power"]))
-        self.lbl_multi.set_text(str(mqtt_data["N/0/Ac/Charger/0/Power"]))
-        tank_val = mqtt_data["N/0/Tank/0/Level"]
-        self.lbl_tank_percent.set_text("{} %".format(tank_val))
-        try:
-            self.tank_meter.set_value(int(float(tank_val)))
-        except:
-            self.tank_meter.set_value(0)
+        for topic, label in self.labels.items():
+            val = mqtt_data.get(topic, "--")
+            if self.tank_meter and topic == "N/0/Tank/0/Level":
+                label.set_text("{} %".format(val))
+                try:
+                    self.tank_meter.set_value(int(float(val)))
+                except:
+                    self.tank_meter.set_value(0)
+            else:
+                label.set_text(str(val))
 
     def show_page(self, idx):
         self.current = idx % len(self.pages)
@@ -276,7 +275,7 @@ def try_connect():
         client.set_callback(mqtt_callback)
         client.connect()
         for t in MQTT_TOPICS:
-            client.subscribe(t)
+            client.subscribe(t["topic"])
         mqtt_connected = True
         lv.scr_load(pages.container)
     except Exception as e:
@@ -288,21 +287,24 @@ def mqtt_callback(topic, msg):
     topic_str = topic.decode() if isinstance(topic, bytes) else topic
     msg_str = msg.decode() if isinstance(msg, bytes) else msg
     if topic_str in mqtt_data:
-        if "Soc" in topic_str or "Level" in topic_str:
-            try:
-                mqtt_data[topic_str] = "{:.1f}".format(float(msg_str))
-            except:
+        # Find topic config for formatting
+        topic_cfg = next((t for t in MQTT_TOPICS if t["topic"] == topic_str), None)
+        if topic_cfg:
+            if "Soc" in topic_str or "Level" in topic_str:
+                try:
+                    mqtt_data[topic_str] = "{:.1f}".format(float(msg_str))
+                except:
+                    mqtt_data[topic_str] = msg_str
+            elif "TimeToGo" in topic_str:
+                # TimeToGo is typically seconds, convert to hours
+                try:
+                    sec = int(msg_str)
+                    mqtt_data[topic_str] = "{:.2f}".format(sec/3600)
+                except:
+                    mqtt_data[topic_str] = msg_str
+            else:
                 mqtt_data[topic_str] = msg_str
-        elif "TimeToGo" in topic_str:
-            # TimeToGo is typically seconds, convert to hours
-            try:
-                sec = int(msg_str)
-                mqtt_data[topic_str] = "{:.2f}".format(sec/3600)
-            except:
-                mqtt_data[topic_str] = msg_str
-        else:
-            mqtt_data[topic_str] = msg_str
-        pages.update()
+            pages.update()
 
 # --- MAIN LOOP ---
 try_connect()
