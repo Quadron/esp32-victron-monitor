@@ -1,5 +1,8 @@
 # Firmware Bin Files
 
-Upload your compiled MicroPython firmware here (e.g., `micropython_lvgl_esp32s3.bin`).
+The original micropython firmware from waveshare for this board:
+S3-Touch-LCD-1.28-MPY.bin 
 
-_Note: Only upload files built for ESP32-S3 with LVGL support._
+
+Vanilla lv-micropython built for ESP32_s3_GENERIC from source using ESP-IDF v5.1.2 and the instructions in lv-micropython.
+lv-micropython.bin
